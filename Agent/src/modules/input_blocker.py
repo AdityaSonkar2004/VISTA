@@ -2,51 +2,55 @@ import ctypes
 import time
 import sys
 
-user32 = ctypes.WinDLL("user32", use_last_error=True)
 
-# -------- BlockInput --------
-BlockInput = user32.BlockInput
-BlockInput.argtypes = [ctypes.c_bool]
-BlockInput.restype = ctypes.c_bool
+def block_input_15min():
+    """
+    Blocks keyboard + mouse input.
+    Auto-restores after 15 minutes or if process is killed.
+    No parameters. No external timer.
+    """
 
-# -------- ClipCursor --------
-ClipCursor = user32.ClipCursor
-ClipCursor.argtypes = [ctypes.c_void_p]
-ClipCursor.restype = ctypes.c_bool
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
 
-class RECT(ctypes.Structure):
-    _fields_ = [
-        ("left", ctypes.c_long),
-        ("top", ctypes.c_long),
-        ("right", ctypes.c_long),
-        ("bottom", ctypes.c_long),
-    ]
+    # -------- APIs --------
+    BlockInput = user32.BlockInput
+    BlockInput.argtypes = [ctypes.c_bool]
+    BlockInput.restype = ctypes.c_bool
 
-def block_input_for(seconds: int):
+    ClipCursor = user32.ClipCursor
+    ClipCursor.argtypes = [ctypes.c_void_p]
+    ClipCursor.restype = ctypes.c_bool
+
+    class RECT(ctypes.Structure):
+        _fields_ = [
+            ("left", ctypes.c_long),
+            ("top", ctypes.c_long),
+            ("right", ctypes.c_long),
+            ("bottom", ctypes.c_long),
+        ]
+
+    # confine cursor to 1px box
     rect = RECT(0, 0, 1, 1)
 
+    # 15 minutes hard limit
+    END_TIME = time.monotonic() + (15* 60)
+
     if not BlockInput(True):
-        print("[-] BlockInput failed (run as admin)")
-        sys.exit(1)
+        raise PermissionError("BlockInput failed — run as Administrator")
 
     try:
-        print(f"[+] Input blocked for {seconds} seconds")
+        print("[+] Input blocked (15 min max)")
 
-        end_time = time.time() + seconds
-        while time.time() < end_time:
-            # Re-apply mouse confinement every second
+        while time.monotonic() < END_TIME:
+            # BlockInput is global but ClipCursor can be lost → reapply both
+            BlockInput(True)
             ClipCursor(ctypes.byref(rect))
-            time.sleep(1)
+            time.sleep(2)
 
     finally:
-        # ALWAYS restore input
+        # ABSOLUTE GUARANTEE restore
         ClipCursor(None)
         BlockInput(False)
-        print("[+] Input fully restored")
-
-if __name__ == "__main__":
-    block_input_for(30)
+        print("[+] Input restored")
 
 
-
-### block input evry second is needed to add same like clipsursor

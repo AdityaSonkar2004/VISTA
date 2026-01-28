@@ -50,7 +50,7 @@ VISTA/
 |  |  |  ├─ lock/unlock_receiver.py   ✅
 |  |  |  ├─ apps_and_process_blocker.py ✅
 │  │  ├─ utils/
-│  │  │  ├─ crypto.py                # encrypt/decrypt, key management
+│  │  │  ├─ encrypt.py                # encrypt/decrypt, key management
 │  │  │  ├─ config.py                # loads from ProgramData / env
 │  │  │  └─ logger.py
 │  ├─ requirements.txt
@@ -83,8 +83,24 @@ VISTA/
 
 
 
-
 aditi mam :- summary generator
 
 for the api use 1> websockets and https uploads
 or 2> gRPC
+
+
+
+
+input:-
+
+ocr info 
+keylogs ✅
+
+
+output:-
+
+cheating :- ture or false 
+if true , reasoning :- 
+
+cheating :- ss,keylog , ss of 10 secs before and 10 secs after 
+

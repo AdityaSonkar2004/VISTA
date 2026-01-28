@@ -4,103 +4,93 @@ import os
 import sys
 import time
 
-BLOCKED = {
-    "chrome.exe",
-    "firefox.exe",
-    "msedge.exe",
-   
-}
 
-SCAN_INTERVAL = 0.4  # seconds
-SELF_PID = os.getpid()
+def process_blocker(blocked, scan_interval=0.4):
+  
 
+    blocked = {p.casefold() for p in blocked}
+    self_pid = os.getpid()
 
-if not ctypes.windll.shell32.IsUserAnAdmin():
-    sys.exit("[-] Run as Administrator")
+    # ---------- Admin check ----------
+    if not ctypes.windll.shell32.IsUserAnAdmin():
+        raise PermissionError("Run as Administrator")
 
-TH32CS_SNAPPROCESS = 0x00000002
-PROCESS_TERMINATE = 0x0001
+    # ---------- Win32 constants ----------
+    TH32CS_SNAPPROCESS = 0x00000002
+    PROCESS_TERMINATE = 0x0001
 
-kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    ULONG_PTR = ctypes.c_uint64 if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_uint32
 
-ULONG_PTR = ctypes.c_uint64 if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_uint32
+    class PROCESSENTRY32(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ULONG_PTR),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", wintypes.LONG),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.CHAR * 260),
+        ]
 
-class PROCESSENTRY32(ctypes.Structure):
-    _fields_ = [
-        ("dwSize", wintypes.DWORD),
-        ("cntUsage", wintypes.DWORD),
-        ("th32ProcessID", wintypes.DWORD),
-        ("th32DefaultHeapID", ULONG_PTR),
-        ("th32ModuleID", wintypes.DWORD),
-        ("cntThreads", wintypes.DWORD),
-        ("th32ParentProcessID", wintypes.DWORD),
-        ("pcPriClassBase", wintypes.LONG),
-        ("dwFlags", wintypes.DWORD),
-        ("szExeFile", wintypes.CHAR * 260),
-    ]
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
 
-kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
-kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.Process32First.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32)]
+    kernel32.Process32Next.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32)]
 
-kernel32.Process32First.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32)]
-kernel32.Process32First.restype = wintypes.BOOL
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
 
-kernel32.Process32Next.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32)]
-kernel32.Process32Next.restype = wintypes.BOOL
+    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 
-kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-kernel32.OpenProcess.restype = wintypes.HANDLE
+    # ---------- helpers ----------
+    def kill_process(pid):
+        if pid <= 4 or pid == self_pid:
+            return
+        h = kernel32.OpenProcess(PROCESS_TERMINATE, False, pid)
+        if h:
+            kernel32.TerminateProcess(h, 1)
+            kernel32.CloseHandle(h)
 
-kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
-kernel32.TerminateProcess.restype = wintypes.BOOL
+    def scan_and_kill():
+        snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        if snapshot == wintypes.HANDLE(-1).value:
+            return
 
-kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-kernel32.CloseHandle.restype = wintypes.BOOL
+        entry = PROCESSENTRY32()
+        entry.dwSize = ctypes.sizeof(entry)
 
+        ok = kernel32.Process32First(snapshot, ctypes.byref(entry))
+        while ok:
+            pid = entry.th32ProcessID
+            name = (
+                bytes(entry.szExeFile)
+                .split(b"\x00", 1)[0]
+                .decode(errors="ignore")
+                .casefold()
+            )
 
-def kill_process(pid: int):
-    if pid <= 4 or pid == SELF_PID:
-        return
-    h = kernel32.OpenProcess(PROCESS_TERMINATE, False, pid)
-    if h:
-        kernel32.TerminateProcess(h, 1)
-        kernel32.CloseHandle(h)
+            if name in blocked:
+                kill_process(pid)
 
-def scan_and_kill():
-    """Scans ALL processes and kills blocked ones"""
-    snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
-    if snapshot == wintypes.HANDLE(-1).value:
-        return set()
+            ok = kernel32.Process32Next(snapshot, ctypes.byref(entry))
 
-    seen_pids = set()
-    entry = PROCESSENTRY32()
-    entry.dwSize = ctypes.sizeof(entry)
+        kernel32.CloseHandle(snapshot)
 
-    ok = kernel32.Process32First(snapshot, ctypes.byref(entry))
-    while ok:
-        pid = entry.th32ProcessID
-        name = bytes(entry.szExeFile).split(b"\x00", 1)[0].decode().casefold()
+    # ---------- main loop ----------
+    print("[+] Process blocker started")
+    print("[+] Blocked:", blocked)
 
-        seen_pids.add(pid)
-
-        if name in BLOCKED:
-            kill_process(pid)
-
-        ok = kernel32.Process32Next(snapshot, ctypes.byref(entry))
-
-    kernel32.CloseHandle(snapshot)
-    return seen_pids
-
+    while True:
+        scan_and_kill()
+        time.sleep(scan_interval)
 
 
-print("[+] Blocked list:", BLOCKED)
-known_pids = scan_and_kill()
-print("[+] Monitoring new processes")
-
-while True:
-    current_pids = scan_and_kill()
-    known_pids = current_pids
-    time.sleep(SCAN_INTERVAL)
 
 
 
