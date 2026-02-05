@@ -1,19 +1,34 @@
 import threading
+import time
 from modules.app_and_process_blocker import process_blocker
 from modules.broadcast import fullscreen_image_slideshow
 from modules.input_blocker import block_input_15min
 from modules.external_device_detector import start_usb_watcher
 from modules.keylog import start_keyboard_logger as _start_keyboard_logger
-from modules.screenshots import start_screen_capture_worker as _start_screen_capture
+from modules.screenshotwithtabdetection import (
+    start as _start_screen,
+    stop as _stop_screen,
+    is_alive as screen_is_alive
+)
+
+from analysis_modules.ocr.ocr import start_ocr_service
+from analysis_modules.cheating_analysis.raw_data_collector import (
+    start_raw_data_collector,
+    stop_raw_data_collector
+)
+
+
 
 
 # feature flags
 p1 = True    # process blocker
-p2 = True   # slideshow
-p3 = True    # input blocker (15 min)
-p4 = True     # USB detector
+p2 = False   # slideshow
+p3 = False   # input blocker (15 min)
+p4 = True    # USB detector
 p5 = True    # keyboard logger
-p6 = True   # screen capture
+p6 = True    # screen capture + tab detection
+p7 = True    # OCR service
+p8 = True    # raw data collector
 
 
 def start_process_blocker():
@@ -61,7 +76,7 @@ def on_usb_disconnected():
 
 
 def start_usb_detector():
-    start_usb_watcher(on_usb_connected,on_usb_disconnected)
+    start_usb_watcher(on_usb_connected, on_usb_disconnected)
 
 
 def start_keyboard_logger_worker():
@@ -73,14 +88,34 @@ def start_keyboard_logger_worker():
     return t
 
 
-def start_screen_capture_worker(interval=5):
+def start_screen_capture_worker():
     t = threading.Thread(
-        target=_start_screen_capture,
-        kwargs={"interval": interval},
+        target=_start_screen,
         daemon=True
     )
     t.start()
     return t
+
+
+def start_ocr_worker():
+    t = threading.Thread(
+        target=start_ocr_service,
+        daemon=True
+    )
+    t.start()
+    return t
+
+
+def start_raw_data_worker():
+    t = threading.Thread(
+        target=start_raw_data_collector,
+        daemon=True
+    )
+    t.start()
+    return t
+
+
+
 
 def main():
     print("[orchestrator] starting")
@@ -90,6 +125,8 @@ def main():
     input_blocker_thread = None
     keyboard_thread = None
     screen_thread = None
+    ocr_thread = None
+    raw_thread = None
 
     if p1:
         pb_thread = start_process_blocker()
@@ -109,8 +146,19 @@ def main():
     if p6:
         screen_thread = start_screen_capture_worker()
 
+    # OCR starts ONLY based on flag dependency (NO aliveness check)
+    if p7 and p6:
+        ocr_thread = start_ocr_worker()
+
+    # Raw data starts ONLY if screenshot + OCR flags are enabled
+    if p8 and p6 and p7:
+        raw_thread = start_raw_data_worker()
+
+
     while True:
         
+        time.sleep(5)
+
         if p1 and pb_thread and not pb_thread.is_alive():
             print("[orchestrator] process blocker died")
 
@@ -123,11 +171,15 @@ def main():
         if p5 and keyboard_thread and not keyboard_thread.is_alive():
             print("[orchestrator] keyboard logger died")
 
-        if p6 and screen_thread and not screen_thread.is_alive():
+        if p6 and not screen_is_alive():
             print("[orchestrator] screen capture died")
 
-        # USB is callback-driven
-        pass
+        if p7 and ocr_thread and not ocr_thread.is_alive():
+            print("[orchestrator] OCR service died")
+
+        if p8 and raw_thread and not raw_thread.is_alive():
+            print("[orchestrator] raw data collector died")
+
 
 
 if __name__ == "__main__":
